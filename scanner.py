@@ -85,12 +85,36 @@ INDEX_MAP = {
 # Static fallback for Nifty 200 Momentum 30 (as of Jul 2026).
 # Update quarterly from https://www.niftyindices.com/reports/factsheets
 NIFTY200_MOMENTUM_30_STATIC = [
-    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK",
-    "BAJAJ-AUTO", "BAJAJFINSV", "BAJFINANCE", "CIPLA", "COALINDIA",
-    "DRREDDY", "ETERNAL", "GRASIM", "HINDUNILVR", "ICICIBANK",
-    "INDIGO", "JSWSTEEL", "KOTAKBANK", "LT", "MARUTI",
-    "MAXHEALTH", "NESTLEIND", "SHRIRAMFIN", "SUNPHARMA", "TITAN",
-    "TMPV", "TRENT", "ULTRACEMCO", "WIPRO", "ZYDUSLIFE"
+"ABB",
+"ADANIENSOL",
+"ADANIGREEN",
+"ADANIPOWER",
+"ABCAPITAL",
+"BSE",
+"BHARATFORG",
+"BHEL",
+"CGPOWER",
+"CUMMINSIND",
+"FEDERALBNK",
+"GVT&D",
+"GLENMARK",
+"HINDALCO",
+"POWERINDIA",
+"KEI",
+"LTF",
+"LAURUSLABS",
+"MCX",
+"NTPC",
+"NATIONALUM",
+"POLYCAB",
+"MOTHERSON",
+"SHRIRAMFIN",
+"SOLARINDS",
+"SAIL",
+"TATASTEEL",
+"TORNTPHARM",
+"VEDL",
+"IDEA"
 ]
 
 SUPERTREND_PERIOD = 9
@@ -212,26 +236,26 @@ async def resolve_token(session, symbol):
 
 
 async def fetch_index_constituents(index_name: str) -> list[str]:
-    """Fetch live index constituents from NSE's equity-stockIndices JSON API.
+    """Fetch live index constituents from NSE's official CSV lists on archives.nseindia.com."""
+    csv_urls = {
+        "NIFTY 50": "https://archives.nseindia.com/content/indices/ind_nifty50list.csv",
+        "NIFTY NEXT 50": "https://archives.nseindia.com/content/indices/ind_niftynext50list.csv",
+        "NIFTY MIDCAP 150": "https://archives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+        "NIFTY SMALLCAP 100": "https://archives.nseindia.com/content/indices/ind_niftysmallcap100list.csv",
+    }
+    
+    url = csv_urls.get(index_name)
+    if not url:
+        print(f"  ERROR: No CSV URL mapped for index '{index_name}'")
+        return []
 
-    The API returns each constituent with a 'symbol' field.  The first entry
-    is the index itself (e.g. "NIFTY 50") — we skip it and return only the
-    stock symbols.
-
-    NSE requires a session cookie obtained by first hitting the homepage.
-    Returns an empty list on failure.
-    """
-    api_url = f"https://www.nseindia.com/api/equity-stockIndices?index={index_name}"
     print(f"  Fetching constituents for '{index_name}' from NSE...", flush=True)
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
         ),
-        "Accept": "application/json, text/plain, */*",
-        "Referer": "https://www.nseindia.com/",
-        "Accept-Language": "en-US,en;q=0.9",
-        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "text/csv,text/plain,application/csv",
     }
     try:
         async with httpx.AsyncClient(
@@ -239,25 +263,30 @@ async def fetch_index_constituents(index_name: str) -> list[str]:
             timeout=30,
             headers=headers,
         ) as client:
-            # Establish a session cookie by hitting the main page first.
-            await client.get("https://www.nseindia.com/", timeout=20)
-            resp = await client.get(api_url, timeout=30)
+            resp = await client.get(url, timeout=30)
         resp.raise_for_status()
-        data = resp.json()
+        
+        import csv
+        reader = csv.DictReader(resp.text.splitlines())
+        symbol_col = None
+        if reader.fieldnames:
+            for field in reader.fieldnames:
+                if field.strip().lower() == "symbol":
+                    symbol_col = field
+                    break
+        
+        if not symbol_col:
+            print("  ERROR: Could not find 'Symbol' column in CSV")
+            return []
+            
+        symbols = []
+        for row in reader:
+            sym = row.get(symbol_col)
+            if sym:
+                symbols.append(sym.strip())
+                
     except Exception as exc:
-        print(f"  ERROR fetching from NSE API: {exc}")
-        return []
-
-    try:
-        # 'data' is a list of dicts; first entry is the index row itself.
-        rows = data.get("data", [])
-        symbols = [
-            row["symbol"].strip()
-            for row in rows
-            if row.get("symbol", "").strip() and row.get("symbol") != index_name
-        ]
-    except Exception as exc:
-        print(f"  ERROR parsing NSE API response: {exc}")
+        print(f"  ERROR fetching/parsing index CSV from NSE: {exc}")
         return []
 
     symbols = sorted(set(symbols))
