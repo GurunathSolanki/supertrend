@@ -475,10 +475,33 @@ async def scan_index(session, symbols, from_date, to_date, lookback_weeks):
                 break
 
         recent = flip_weeks is not None and flip_weeks < lookback_weeks
-        results.append((sym, flip_weeks, recent))
+
+        # Calculate Volume Ratio (current week volume vs 10-week average volume prior to current week)
+        volume_ratio = 1.0
+        if len(weekly) >= 2:
+            prev_volumes = weekly["volume"].iloc[:-1]
+            avg_vol = prev_volumes.tail(10).mean()
+            if avg_vol > 0:
+                volume_ratio = weekly["volume"].iloc[-1] / avg_vol
+
+        # Calculate Distance to Supertrend support in %
+        current_close = weekly["close"].iloc[-1]
+        st_val = weekly["supertrend"].iloc[-1]
+        distance_to_st = 0.0
+        if st_val > 0:
+            distance_to_st = ((current_close - st_val) / st_val) * 100
+
+        # Calculate Recommendation Score
+        base_score = 50.0
+        new_bonus = 30.0 if recent else 0.0
+        vol_bonus = min(volume_ratio * 5.0, 25.0)
+        dist_penalty = min(max(distance_to_st, 0.0) * 1.5, 25.0)
+        score = base_score + new_bonus + vol_bonus - dist_penalty
+
+        results.append((sym, flip_weeks, recent, volume_ratio, distance_to_st, score))
         label = "NEW" if recent else "   "
         age = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
-        print(f"  {label} BUY  {sym}  (since {age})")
+        print(f"  {label} BUY  {sym}  (since {age}) | Vol Ratio: {volume_ratio:.2f}x | Dist: {distance_to_st:.1f}% | Score: {score:.1f}")
     return results
 
 
@@ -536,15 +559,34 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
     if not sorted_buys:
         buy_rows_html = '<div class="no-signals">No BUY signals found.</div>'
     else:
-        for sym, flip_weeks, recent in sorted_buys:
+        for item in sorted_buys:
+            sym, flip_weeks, recent = item[0], item[1], item[2]
+            vol_ratio = item[3] if len(item) > 3 else 1.0
+            dist = item[4] if len(item) > 4 else 0.0
+            score = item[5] if len(item) > 5 else 0.0
+
             badge_class = "badge badge-new" if recent else "badge badge-old"
             badge_text = "★ NEW" if recent else "ACTIVE"
             age_str = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
+            
+            metrics_html = ""
+            if len(item) >= 6:
+                metrics_html = f"""
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                    Score: <strong style="color: var(--primary);">{score:.1f}</strong> | 
+                    Vol: <strong>{vol_ratio:.1f}x</strong> | 
+                    Dist: <strong>{dist:.1f}%</strong>
+                </div>
+                """
+
             buy_rows_html += f"""
             <div class="signal-card {'card-new' if recent else ''}">
                 <div class="symbol-section">
                     <span class="{badge_class}">{badge_text}</span>
-                    <span class="symbol-name">{sym}</span>
+                    <div style="display: flex; flex-direction: column;">
+                        <span class="symbol-name">{sym}</span>
+                        {metrics_html}
+                    </div>
                 </div>
                 <div class="age-info">
                     <span class="age-label">Trend flip:</span>
@@ -580,6 +622,59 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
                     <span class="age-value">{age_str}</span>
                 </div>
             </div>
+            """
+
+    # Generate top recommended setups
+    has_extended_metrics = len(buy_signals) > 0 and len(buy_signals[0]) >= 6
+    recommendations_html = ""
+    if has_extended_metrics:
+        # Sort by score descending
+        ranked_buys = sorted(buy_signals, key=lambda x: x[5], reverse=True)
+        top_recommendations = [b for b in ranked_buys if b[2]] # Preferred NEW breakouts
+        if not top_recommendations:
+            top_recommendations = ranked_buys[:3]
+        else:
+            top_recommendations = top_recommendations[:3]
+
+        if top_recommendations:
+            recommendations_html = """
+            <section class="section-panel recommendation-panel" style="grid-column: 1 / -1; margin-bottom: 2rem; background: linear-gradient(135deg, rgba(88, 166, 255, 0.15) 0%, rgba(63, 185, 80, 0.1) 100%); border-color: rgba(88, 166, 255, 0.3);">
+                <h2 class="section-title" style="color: #58a6ff;">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                    Top Recommended Setups (Ranked)
+                </h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+            """
+            for idx, item in enumerate(top_recommendations):
+                sym, flip_weeks, recent, vol_ratio, dist, score = item
+                rank = idx + 1
+                age_str = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
+                badge = "★ NEW BREAKOUT" if recent else "ACTIVE UPTREND"
+                badge_style = "background: var(--success); color: #04270d;" if recent else "background: rgba(88, 166, 255, 0.15); color: var(--primary);"
+                
+                recommendations_html += f"""
+                    <div style="background: rgba(22, 27, 34, 0.6); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.25rem; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;">
+                        <div style="position: absolute; top: 0; right: 0; background: var(--primary); color: #0d1117; font-weight: 800; padding: 0.25rem 0.75rem; border-bottom-left-radius: 12px; font-size: 0.85rem;">Rank #{rank}</div>
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
+                                <span style="font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 4px; {badge_style}">{badge}</span>
+                                <span style="font-weight: 800; font-size: 1.25rem; letter-spacing: 0.5px;">{sym}</span>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
+                                <div style="display: flex; justify-content: space-between;"><span>Setup Score:</span><strong style="color: var(--text-primary);">{score:.1f}/100</strong></div>
+                                <div style="display: flex; justify-content: space-between;"><span>Volume Ratio:</span><strong style="color: var(--text-primary);">{vol_ratio:.2f}x</strong></div>
+                                <div style="display: flex; justify-content: space-between;"><span>Distance to ST Support:</span><strong style="color: var(--text-primary);">{dist:.1f}%</strong></div>
+                                <div style="display: flex; justify-content: space-between;"><span>Trend Flip:</span><strong style="color: var(--text-primary);">{age_str}</strong></div>
+                            </div>
+                        </div>
+                        <div style="background: rgba(88, 166, 255, 0.1); border-radius: 6px; padding: 0.5rem; text-align: center; font-size: 0.75rem; color: var(--primary); font-weight: 600;">
+                            {"High volume breakout setup with tight stop-loss!" if (vol_ratio > 1.5 and dist < 8) else "Stable uptrend continuation setup."}
+                        </div>
+                    </div>
+                """
+            recommendations_html += """
+                </div>
+            </section>
             """
 
     html_content = f"""<!DOCTYPE html>
@@ -865,6 +960,7 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
         </header>
 
         <main class="grid">
+            {recommendations_html}
             <!-- BUY Signals -->
             <section class="section-panel">
                 <h2 class="section-title buy-title">
@@ -952,6 +1048,32 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
             return f"{colour}{BOLD}{row}{RESET}"
         return f"{DIM}{row}{RESET}"
 
+    # Generate console recommendations
+    recommendations_console = []
+    has_extended_metrics = len(buy_signals) > 0 and len(buy_signals[0]) >= 6
+    if has_extended_metrics:
+        # Sort by score descending
+        ranked_buys = sorted(buy_signals, key=lambda x: x[5], reverse=True)
+        top_recommendations = [b for b in ranked_buys if b[2]] # Preferred NEW breakouts
+        if not top_recommendations:
+            top_recommendations = ranked_buys[:3]
+        else:
+            top_recommendations = top_recommendations[:3]
+        
+        if top_recommendations:
+            recommendations_console += [
+                f"{CYAN}{divider('═')}{RESET}",
+                f"{BOLD}{GREEN}  ★★★ TOP RECOMMENDED BUY SETUPS (Ranked) ★★★{RESET}",
+                f"  {'─'*58}",
+            ]
+            for idx, item in enumerate(top_recommendations):
+                sym, flip_weeks, recent, vol_ratio, dist, score = item
+                note = "NEW Breakout" if recent else "Active Trend"
+                recommendations_console.append(
+                    f"  #{idx+1} {BOLD}{sym:<8}{RESET} | Score: {score:>5.1f}/100 | Vol: {vol_ratio:>4.2f}x | Dist: {dist:>4.1f}% | {note}"
+                )
+            recommendations_console += [""]
+
     console_lines = [
         "",
         f"{BOLD}{CYAN}{'Weekend Scan Results':^{width}}{RESET}",
@@ -960,6 +1082,11 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
         f"  NEW signal: within last {lookback_weeks} week(s)",
         f"{CYAN}{divider()}{RESET}",
         "",
+    ]
+    if recommendations_console:
+        console_lines += recommendations_console
+
+    console_lines += [
         f"{BOLD}  {'BUY Candidates':}{RESET}",
         f"  {'─'*28}  {'────────'}",
     ]
@@ -999,6 +1126,21 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
     print("\n".join(console_lines))
 
     # ── plain-text file (no ANSI) ─────────────────────────────────────────────
+    # Generate file recommendations
+    recommendations_file = []
+    if has_extended_metrics and top_recommendations:
+        recommendations_file += [
+            "  ★★★ TOP RECOMMENDED BUY SETUPS (Ranked) ★★★",
+            "  " + "─"*58,
+        ]
+        for idx, item in enumerate(top_recommendations):
+            sym, flip_weeks, recent, vol_ratio, dist, score = item
+            note = "NEW Breakout" if recent else "Active Trend"
+            recommendations_file.append(
+                f"  #{idx+1} {sym:<8} | Score: {score:>5.1f}/100 | Vol: {vol_ratio:>4.2f}x | Dist: {dist:>4.1f}% | {note}"
+            )
+        recommendations_file += ["", divider(), ""]
+
     file_lines = [
         f"Weekend Scan Results — {now}",
         divider("="),
@@ -1006,6 +1148,11 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
         f"  NEW signal: within last {lookback_weeks} week(s)",
         divider(),
         "",
+    ]
+    if recommendations_file:
+        file_lines += recommendations_file
+
+    file_lines += [
         "  BUY Candidates",
         f"  {'─'*28}  {'────────'}",
     ]
