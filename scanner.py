@@ -894,13 +894,18 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
         if not signals:
             return ["  (none)"]
         new_rows, old_rows = [], []
-        for sym, flip_weeks, recent in sorted(signals, key=lambda x: x[0]):
+        for item in sorted(signals, key=lambda x: x[0]):
+            sym = item[0]
+            flip_weeks = item[1]
+            recent = item[2]
+            broker = item[3] if len(item) > 3 else ""
+            broker_str = f" ({broker})" if broker else ""
             if flip_weeks is not None:
                 age_str = f"{flip_weeks:>2}w ago"
             else:
-                age_str = "always" if signal_type == "BUY" else "always"
+                age_str = "always"
             badge = "★ NEW" if recent else "     "
-            row = fmt_row(sym, age_str, badge)
+            row = fmt_row(f"{sym}{broker_str}", age_str, badge)
             (new_rows if recent else old_rows).append(row)
         return new_rows + old_rows
 
@@ -929,10 +934,15 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
         f"{BOLD}  {'BUY Candidates':}{RESET}",
         f"  {'─'*28}  {'────────'}",
     ]
-    for sym, flip_weeks, recent in sorted(buy_signals, key=lambda x: (not x[2], x[0])):
+    for item in sorted(buy_signals, key=lambda x: (not x[2], x[0])):
+        sym = item[0]
+        flip_weeks = item[1]
+        recent = item[2]
+        broker = item[3] if len(item) > 3 else ""
+        broker_str = f" ({broker})" if broker else ""
         age_str = f"{flip_weeks:>2}w ago" if flip_weeks is not None else "always "
         badge = "★ NEW" if recent else "     "
-        row = fmt_row(sym, age_str, badge)
+        row = fmt_row(f"{sym}{broker_str}", age_str, badge)
         console_lines.append(coloured_row(row, recent, "BUY"))
     if not buy_signals:
         console_lines.append("  (none)")
@@ -943,10 +953,15 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
         f"{BOLD}  {'SELL Alerts (Portfolio)':}{RESET}",
         f"  {'─'*28}  {'────────'}",
     ]
-    for sym, flip_weeks, recent in sorted(sell_signals, key=lambda x: (not x[2], x[0])):
+    for item in sorted(sell_signals, key=lambda x: (not x[2], x[0])):
+        sym = item[0]
+        flip_weeks = item[1]
+        recent = item[2]
+        broker = item[3] if len(item) > 3 else ""
+        broker_str = f" ({broker})" if broker else ""
         age_str = f"{flip_weeks:>2}w ago" if flip_weeks is not None else "always "
         badge = "★ NEW" if recent else "     "
-        row = fmt_row(sym, age_str, badge)
+        row = fmt_row(f"{sym}{broker_str}", age_str, badge)
         console_lines.append(coloured_row(row, recent, "SELL"))
     if not sell_signals:
         console_lines.append("  (none)")
