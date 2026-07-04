@@ -457,7 +457,14 @@ async def scan_portfolio(session, symbols, from_date, to_date, lookback_weeks):
     """Scan portfolio stocks for SELL signals."""
     results = []
     print("\n--- Portfolio (SELL scan) ---")
-    for sym in symbols:
+    
+    # Check if symbols is a dictionary of symbol -> broker
+    if isinstance(symbols, dict):
+        items = list(symbols.items())
+    else:
+        items = [(sym, "") for sym in symbols]
+
+    for sym, broker in items:
         df = await get_ohlcv(session, sym, from_date, to_date)
         if df is None:
             continue
@@ -477,10 +484,11 @@ async def scan_portfolio(session, symbols, from_date, to_date, lookback_weeks):
                 break
 
         recent = flip_weeks is not None and flip_weeks < lookback_weeks
-        results.append((sym, flip_weeks, recent))
+        results.append((sym, flip_weeks, recent, broker))
         label = "NEW" if recent else "   "
         age = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
-        print(f"  {label} SELL {sym}  (since {age})")
+        broker_str = f" ({broker})" if broker else ""
+        print(f"  {label} SELL {sym}{broker_str}  (since {age})")
     return results
 
 
@@ -520,15 +528,23 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
     if not sorted_sells:
         sell_rows_html = '<div class="no-signals">No SELL signals found.</div>'
     else:
-        for sym, flip_weeks, recent in sorted_sells:
+        for item in sorted_sells:
+            sym, flip_weeks, recent = item[0], item[1], item[2]
+            broker = item[3] if len(item) > 3 else ""
             badge_class = "badge badge-sell-new" if recent else "badge badge-sell-old"
             badge_text = "★ NEW" if recent else "ACTIVE"
             age_str = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
+            
+            broker_html = f'<div class="broker-info">Broker: <span>{broker}</span></div>' if broker else ''
+            
             sell_rows_html += f"""
             <div class="signal-card {'card-sell-new' if recent else ''}">
                 <div class="symbol-section">
                     <span class="{badge_class}">{badge_text}</span>
-                    <span class="symbol-name">{sym}</span>
+                    <div style="display: flex; flex-direction: column;">
+                        <span class="symbol-name">{sym}</span>
+                        {broker_html}
+                    </div>
                 </div>
                 <div class="age-info">
                     <span class="age-label">Trend flip:</span>
@@ -757,6 +773,17 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
             border: 1px solid var(--border-color);
         }}
 
+        .broker-info {{
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.1rem;
+        }}
+
+        .broker-info span {{
+            color: var(--primary);
+            font-weight: 600;
+        }}
+
         .age-info {{
             text-align: right;
         }}
@@ -958,21 +985,33 @@ def report_results(buy_signals, sell_signals, lookback_weeks):
 # ── Bootstrap ─────────────────────────────────────────────────────────────────
 
 def load_portfolio_symbols():
-    """Read portfolio stock symbols from *portfolio.csv*."""
+    """Read portfolio stock symbols from *portfolio.csv*.
+    Returns a dict of Symbol -> Broker mapping.
+    """
     try:
         with open(PORTFOLIO_CSV) as f:
             reader = csv.DictReader(f)
-            return [row["Symbol"].strip() for row in reader if row.get("Symbol")]
+            portfolio = {}
+            for row in reader:
+                symbol = row.get("Symbol")
+                if symbol:
+                    # Clean symbol (handling non-breaking spaces like \xa0)
+                    sym_clean = symbol.replace('\xa0', '').strip()
+                    broker = row.get("Broker", "")
+                    broker_clean = broker.replace('\xa0', '').strip() if broker else ""
+                    portfolio[sym_clean] = broker_clean
+            return portfolio
     except FileNotFoundError:
         print(f"[init] {PORTFOLIO_CSV} not found -- creating sample")
         with open(PORTFOLIO_CSV, "w") as f:
             f.write("Symbol,Broker\nTCS,Sharekhan\n")
-        return ["TCS"]
+        return {"TCS": "Sharekhan"}
 
 
 async def main():
     # ── Step 1: user input & NSE fetch (no MCP session open yet) ─────────────
-    portfolio_symbols = load_portfolio_symbols()
+    portfolio_map = load_portfolio_symbols()
+    portfolio_symbols = list(portfolio_map.keys())
     print(f"Portfolio stocks: {portfolio_symbols}")
 
     print("\nAvailable options for scanning:")
@@ -1064,7 +1103,7 @@ async def main():
 
                     if is_portfolio_scan:
                         buy = []
-                        sell = await scan_portfolio(session, portfolio_symbols, from_date, to_date, lookback_weeks)
+                        sell = await scan_portfolio(session, portfolio_map, from_date, to_date, lookback_weeks)
                     else:
                         buy = await scan_index(session, index_symbols, from_date, to_date, lookback_weeks)
                         sell = []
