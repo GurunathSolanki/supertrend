@@ -486,6 +486,366 @@ async def scan_portfolio(session, symbols, from_date, to_date, lookback_weeks):
 
 # ── Reporting ─────────────────────────────────────────────────────────────────
 
+def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, filename_prefix):
+    """Write results to a beautifully designed, responsive HTML report file."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    
+    # Sort signals
+    sorted_buys = sorted(buy_signals, key=lambda x: (not x[2], x[0]))
+    sorted_sells = sorted(sell_signals, key=lambda x: (not x[2], x[0]))
+
+    # Generate lists of items
+    buy_rows_html = ""
+    if not sorted_buys:
+        buy_rows_html = '<div class="no-signals">No BUY signals found.</div>'
+    else:
+        for sym, flip_weeks, recent in sorted_buys:
+            badge_class = "badge badge-new" if recent else "badge badge-old"
+            badge_text = "★ NEW" if recent else "ACTIVE"
+            age_str = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
+            buy_rows_html += f"""
+            <div class="signal-card {'card-new' if recent else ''}">
+                <div class="symbol-section">
+                    <span class="{badge_class}">{badge_text}</span>
+                    <span class="symbol-name">{sym}</span>
+                </div>
+                <div class="age-info">
+                    <span class="age-label">Trend flip:</span>
+                    <span class="age-value">{age_str}</span>
+                </div>
+            </div>
+            """
+
+    sell_rows_html = ""
+    if not sorted_sells:
+        sell_rows_html = '<div class="no-signals">No SELL signals found.</div>'
+    else:
+        for sym, flip_weeks, recent in sorted_sells:
+            badge_class = "badge badge-sell-new" if recent else "badge badge-sell-old"
+            badge_text = "★ NEW" if recent else "ACTIVE"
+            age_str = f"{flip_weeks}w ago" if flip_weeks is not None else "always"
+            sell_rows_html += f"""
+            <div class="signal-card {'card-sell-new' if recent else ''}">
+                <div class="symbol-section">
+                    <span class="{badge_class}">{badge_text}</span>
+                    <span class="symbol-name">{sym}</span>
+                </div>
+                <div class="age-info">
+                    <span class="age-label">Trend flip:</span>
+                    <span class="age-value">{age_str}</span>
+                </div>
+            </div>
+            """
+
+    html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weekend Supertrend Scan - {index_label}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Plus+Jakarta+Sans:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {{
+            --bg-color: #0d1117;
+            --card-bg: rgba(22, 27, 34, 0.7);
+            --border-color: rgba(48, 54, 61, 0.6);
+            --text-primary: #f0f6fc;
+            --text-secondary: #8b949e;
+            --primary: #58a6ff;
+            --success: #3fb950;
+            --success-glow: rgba(63, 185, 80, 0.15);
+            --danger: #f85149;
+            --danger-glow: rgba(248, 81, 73, 0.15);
+            --glass-border: rgba(255, 255, 255, 0.08);
+        }}
+
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }}
+
+        body {{
+            background: radial-gradient(circle at 50% 0%, #161b22 0%, #0d1117 100%);
+            color: var(--text-primary);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            min-height: 100vh;
+            padding: 2rem 1.5rem;
+            line-height: 1.5;
+        }}
+
+        .container {{
+            max-width: 1100px;
+            margin: 0 auto;
+        }}
+
+        header {{
+            text-align: center;
+            margin-bottom: 3rem;
+            animation: fadeIn 0.8s ease-out;
+        }}
+
+        h1 {{
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.5px;
+        }}
+
+        .meta-info {{
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-top: 1rem;
+            flex-wrap: wrap;
+        }}
+
+        .meta-item {{
+            background: var(--card-bg);
+            padding: 0.4rem 1rem;
+            border-radius: 50px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+
+        .meta-item span {{
+            color: var(--primary);
+            font-weight: 600;
+        }}
+
+        .grid {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+            align-items: start;
+        }}
+
+        @media (max-width: 768px) {{
+            .grid {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+
+        .section-panel {{
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            padding: 1.75rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }}
+
+        .section-panel:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+        }}
+
+        .section-title {{
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.75rem;
+        }}
+
+        .buy-title {{
+            color: #4ade80;
+        }}
+
+        .sell-title {{
+            color: #f87171;
+        }}
+
+        .signals-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }}
+
+        .signal-card {{
+            background: rgba(30, 41, 59, 0.4);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.2s ease;
+        }}
+
+        .signal-card:hover {{
+            background: rgba(30, 41, 59, 0.7);
+            border-color: var(--primary);
+            transform: translateX(3px);
+        }}
+
+        .card-new {{
+            border-color: rgba(63, 185, 80, 0.4);
+            background: var(--success-glow);
+        }}
+
+        .card-new:hover {{
+            border-color: var(--success);
+            background: rgba(63, 185, 80, 0.25);
+        }}
+
+        .card-sell-new {{
+            border-color: rgba(248, 81, 73, 0.4);
+            background: var(--danger-glow);
+        }}
+
+        .card-sell-new:hover {{
+            border-color: var(--danger);
+            background: rgba(248, 81, 73, 0.25);
+        }}
+
+        .symbol-section {{
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }}
+
+        .symbol-name {{
+            font-weight: 700;
+            font-size: 1.1rem;
+            letter-spacing: 0.5px;
+        }}
+
+        .badge {{
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+            letter-spacing: 0.5px;
+        }}
+
+        .badge-new {{
+            background: var(--success);
+            color: #04270d;
+        }}
+
+        .badge-old {{
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--primary);
+            border: 1px solid rgba(88, 166, 255, 0.3);
+        }}
+
+        .badge-sell-new {{
+            background: var(--danger);
+            color: #310705;
+        }}
+
+        .badge-sell-old {{
+            background: rgba(139, 148, 158, 0.15);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }}
+
+        .age-info {{
+            text-align: right;
+        }}
+
+        .age-label {{
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            display: block;
+        }}
+
+        .age-value {{
+            font-size: 0.9rem;
+            font-weight: 600;
+        }}
+
+        .no-signals {{
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 2rem;
+            font-style: italic;
+            border: 1px dashed var(--border-color);
+            border-radius: 12px;
+        }}
+
+        footer {{
+            text-align: center;
+            margin-top: 4rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border-color);
+            padding-top: 1.5rem;
+        }}
+
+        @keyframes fadeIn {{
+            from {{ opacity: 0; transform: translateY(-10px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Weekend Supertrend Scan</h1>
+            <div class="meta-info">
+                <div class="meta-item">Index/Stock: <span>{index_label}</span></div>
+                <div class="meta-item">Scan Time: <span>{now}</span></div>
+                <div class="meta-item">Lookback: <span>{lookback_weeks} week(s)</span></div>
+                <div class="meta-item">ATR: <span>{SUPERTREND_PERIOD} (Mult: {SUPERTREND_MULTIPLIER})</span></div>
+            </div>
+        </header>
+
+        <main class="grid">
+            <!-- BUY Signals -->
+            <section class="section-panel">
+                <h2 class="section-title buy-title">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                    BUY Candidates (Uptrend)
+                </h2>
+                <div class="signals-list">
+                    {buy_rows_html}
+                </div>
+            </section>
+
+            <!-- SELL Signals -->
+            <section class="section-panel">
+                <h2 class="section-title sell-title">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg>
+                    SELL Alerts (Portfolio Downtrend)
+                </h2>
+                <div class="signals-list">
+                    {sell_rows_html}
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Generated dynamically using Kite MCP | Supertrend (ATR={SUPERTREND_PERIOD}, Multiplier={SUPERTREND_MULTIPLIER})</p>
+            <p style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.7;">This report is for educational purposes only.</p>
+        </footer>
+    </div>
+</body>
+</html>
+"""
+    filename = f"{filename_prefix}.html"
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(html_content)
+    print(f"\n  Beautiful HTML report saved/overwritten: \033[1m{filename}\033[0m")
+
+
 def report_results(buy_signals, sell_signals, lookback_weeks):
     """Print formatted results to console and write ``scan_results.txt``."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -615,17 +975,41 @@ async def main():
     portfolio_symbols = load_portfolio_symbols()
     print(f"Portfolio stocks: {portfolio_symbols}")
 
-    print("\nAvailable indices for scanning:")
+    print("\nAvailable options for scanning:")
     print("1. Nifty 50")
     print("2. Nifty Next 50")
     print("3. Nifty Midcap 150")
     print("4. Nifty Smallcap 100")
     print("5. Nifty 200 Momentum 30")
-    print("6. Single Stock")
+    print("6. Portfolio (from portfolio.csv)")
+    print("7. Single Stock")
 
-    choice = input("Enter your choice (1-6): ").strip()
+    choice = input("Enter your choice (1-7): ").strip()
 
-    if choice in INDEX_MAP:
+    # Determine safe filename prefixes
+    if choice == "1":
+        filename_prefix = "nifty_50"
+    elif choice == "2":
+        filename_prefix = "nifty_next_50"
+    elif choice == "3":
+        filename_prefix = "nifty_midcap_150"
+    elif choice == "4":
+        filename_prefix = "nifty_smallcap_100"
+    elif choice == "5":
+        filename_prefix = "nifty_200_momentum_30"
+    elif choice == "6":
+        filename_prefix = "portfolio"
+    elif choice == "7":
+        filename_prefix = "single_stock"
+    else:
+        filename_prefix = "nifty_200_momentum_30" # fallback
+
+    is_portfolio_scan = (choice == "6")
+
+    if is_portfolio_scan:
+        index_symbols = []
+        index_label = "Portfolio"
+    elif choice in INDEX_MAP:
         index_label, nse_index_name = INDEX_MAP[choice]
         if nse_index_name is None:
             # Static fallback for indices not exposed via NSE API
@@ -639,10 +1023,11 @@ async def main():
                 print(f"ERROR: Could not fetch constituents for {index_label}. Exiting.")
                 raise SystemExit(1)
             print(f"Will scan {index_label} ({len(index_symbols)} stocks).")
-    elif choice == "6":
+    elif choice == "7":
         stock_symbol = input("Enter the stock symbol (e.g., TCS): ").strip().upper()
         index_symbols = [stock_symbol]
         index_label = f"Single stock: {stock_symbol}"
+        filename_prefix = f"single_stock_{stock_symbol.lower()}"
     else:
         print("Invalid choice. Defaulting to Nifty 200 Momentum 30.")
         index_label, nse_index_name = INDEX_MAP["5"]
@@ -677,9 +1062,15 @@ async def main():
                     to_date = datetime.now()
                     from_date = to_date - timedelta(days=HISTORICAL_DAYS)
 
-                    buy = await scan_index(session, index_symbols, from_date, to_date, lookback_weeks)
-                    sell = await scan_portfolio(session, portfolio_symbols, from_date, to_date, lookback_weeks)
+                    if is_portfolio_scan:
+                        buy = []
+                        sell = await scan_portfolio(session, portfolio_symbols, from_date, to_date, lookback_weeks)
+                    else:
+                        buy = await scan_index(session, index_symbols, from_date, to_date, lookback_weeks)
+                        sell = []
+
                     report_results(buy, sell, lookback_weeks)
+                    report_results_html(buy, sell, lookback_weeks, index_label, filename_prefix)
             except (Exception, KeyboardInterrupt) as exc:
                 traceback.print_exc()
                 raise SystemExit(1) from exc
