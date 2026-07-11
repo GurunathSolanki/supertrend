@@ -1262,6 +1262,53 @@ def load_portfolio_symbols():
         return {"TCS": "Sharekhan"}
 
 
+SCAN_ALL_OPTIONS = ["1", "2", "3", "4", "5"]
+
+FILENAME_PREFIX_MAP = {
+    "1": "nifty_50",
+    "2": "nifty_next_50",
+    "3": "nifty_midcap_150",
+    "4": "nifty_smallcap_100",
+    "5": "nifty_200_momentum_30",
+    "6": "portfolio",
+    "7": "single_stock",
+}
+
+
+async def resolve_index_symbols(choice: str) -> tuple[str, list[str]]:
+    """Resolve the index label and symbol list for a given menu choice (1-5).
+
+    Returns (index_label, symbols).  Exits on unrecoverable error.
+    """
+    index_label, nse_index_name = INDEX_MAP[choice]
+    if nse_index_name is None:
+        print(f"\nUsing static list for {index_label} (last updated Jul 2026).")
+        symbols = NIFTY200_MOMENTUM_30_STATIC
+    else:
+        print(f"\nFetching {index_label} constituents from NSE...")
+        symbols = await fetch_index_constituents(nse_index_name)
+        if not symbols:
+            print(f"ERROR: Could not fetch constituents for {index_label}. Skipping.")
+            return index_label, []
+    print(f"Will scan {index_label} ({len(symbols)} stocks).")
+    return index_label, symbols
+
+
+async def run_single_scan(session, choice, index_label, index_symbols, portfolio_map,
+                          from_date, to_date, lookback_weeks, filename_prefix):
+    """Run one scan (index BUY or portfolio SELL) and write its HTML report."""
+    is_portfolio_scan = (choice == "6")
+    if is_portfolio_scan:
+        buy = []
+        sell = await scan_portfolio(session, portfolio_map, from_date, to_date, lookback_weeks)
+    else:
+        buy = await scan_index(session, index_symbols, from_date, to_date, lookback_weeks)
+        sell = []
+
+    report_results(buy, sell, lookback_weeks)
+    report_results_html(buy, sell, lookback_weeks, index_label, filename_prefix)
+
+
 async def main():
     # ── Step 1: user input & NSE fetch (no MCP session open yet) ─────────────
     portfolio_map = load_portfolio_symbols()
@@ -1276,62 +1323,9 @@ async def main():
     print("5. Nifty 200 Momentum 30")
     print("6. Portfolio (from portfolio.csv)")
     print("7. Single Stock")
+    print("8. Scan All  (options 1-5, generates 5 HTML reports)")
 
-    choice = input("Enter your choice (1-7): ").strip()
-
-    # Determine safe filename prefixes
-    if choice == "1":
-        filename_prefix = "nifty_50"
-    elif choice == "2":
-        filename_prefix = "nifty_next_50"
-    elif choice == "3":
-        filename_prefix = "nifty_midcap_150"
-    elif choice == "4":
-        filename_prefix = "nifty_smallcap_100"
-    elif choice == "5":
-        filename_prefix = "nifty_200_momentum_30"
-    elif choice == "6":
-        filename_prefix = "portfolio"
-    elif choice == "7":
-        filename_prefix = "single_stock"
-    else:
-        filename_prefix = "nifty_200_momentum_30" # fallback
-
-    is_portfolio_scan = (choice == "6")
-
-    if is_portfolio_scan:
-        index_symbols = []
-        index_label = "Portfolio"
-    elif choice in INDEX_MAP:
-        index_label, nse_index_name = INDEX_MAP[choice]
-        if nse_index_name is None:
-            # Static fallback for indices not exposed via NSE API
-            print(f"\nUsing static list for {index_label} (last updated Jul 2026).")
-            index_symbols = NIFTY200_MOMENTUM_30_STATIC
-            print(f"Will scan {index_label} ({len(index_symbols)} stocks).")
-        else:
-            print(f"\nFetching {index_label} constituents from NSE...")
-            index_symbols = await fetch_index_constituents(nse_index_name)
-            if not index_symbols:
-                print(f"ERROR: Could not fetch constituents for {index_label}. Exiting.")
-                raise SystemExit(1)
-            print(f"Will scan {index_label} ({len(index_symbols)} stocks).")
-    elif choice == "7":
-        stock_symbol = input("Enter the stock symbol (e.g., TCS): ").strip().upper()
-        index_symbols = [stock_symbol]
-        index_label = f"Single stock: {stock_symbol}"
-        filename_prefix = f"single_stock_{stock_symbol.lower()}"
-    else:
-        print("Invalid choice. Defaulting to Nifty 200 Momentum 30.")
-        index_label, nse_index_name = INDEX_MAP["5"]
-        if nse_index_name is None:
-            print(f"Using static list for {index_label} (last updated Jul 2026).")
-            index_symbols = NIFTY200_MOMENTUM_30_STATIC
-        else:
-            index_symbols = await fetch_index_constituents(nse_index_name)
-            if not index_symbols:
-                print("ERROR: Could not fetch constituents. Exiting.")
-                raise SystemExit(1)
+    choice = input("Enter your choice (1-8): ").strip()
 
     if len(sys.argv) > 1:
         lookback_weeks = int(sys.argv[1])
@@ -1339,6 +1333,78 @@ async def main():
         lookback_weeks = int(input(
             "How many weeks back to check for a direction change? "
         ).strip())
+
+    # ── Scan All path ─────────────────────────────────────────────────────────
+    if choice == "8":
+        # Resolve all index symbol lists up-front (no MCP needed for this)
+        scan_jobs = []  # list of (choice, index_label, symbols, filename_prefix)
+        for opt in SCAN_ALL_OPTIONS:
+            index_label, symbols = await resolve_index_symbols(opt)
+            if symbols:
+                scan_jobs.append((opt, index_label, symbols, FILENAME_PREFIX_MAP[opt]))
+
+        if not scan_jobs:
+            print("ERROR: Could not resolve any index constituents. Exiting.")
+            raise SystemExit(1)
+
+        total = len(scan_jobs)
+        print(f"\nScan All: will process {total} index/indices → {total} HTML report(s).")
+
+        print(f"\nConnecting to Kite MCP ({MCP_SERVER_URL}) ...")
+        transport = _ResilientTransport(max_retries=6, base_delay=5)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            async with streamable_http_client(MCP_SERVER_URL, http_client=http_client) as (read, write, get_sid):
+                try:
+                    async with ClientSession(read, write) as session:
+                        init = await session.initialize()
+                        print(f"Connected -- {init.serverInfo.name} v{init.serverInfo.version}")
+
+                        await ensure_authenticated(session)
+
+                        to_date = datetime.now()
+                        from_date = to_date - timedelta(days=HISTORICAL_DAYS)
+
+                        for idx, (opt, index_label, symbols, filename_prefix) in enumerate(scan_jobs, 1):
+                            print(f"\n{'='*62}")
+                            print(f"  [{idx}/{total}] Scanning {index_label} ...")
+                            print(f"{'='*62}")
+                            await run_single_scan(
+                                session, opt, index_label, symbols,
+                                portfolio_map, from_date, to_date,
+                                lookback_weeks, filename_prefix,
+                            )
+
+                        print(f"\n{'='*62}")
+                        print(f"  Scan All complete. {total} HTML report(s) saved.")
+                        print(f"{'='*62}\n")
+                except (Exception, KeyboardInterrupt) as exc:
+                    traceback.print_exc()
+                    raise SystemExit(1) from exc
+        return
+
+    # ── Single scan path (choices 1-7) ───────────────────────────────────────
+    filename_prefix = FILENAME_PREFIX_MAP.get(choice, "nifty_200_momentum_30")
+    is_portfolio_scan = (choice == "6")
+
+    if is_portfolio_scan:
+        index_symbols = []
+        index_label = "Portfolio"
+    elif choice in INDEX_MAP:
+        index_label, symbols = await resolve_index_symbols(choice)
+        index_symbols = symbols
+        if not index_symbols:
+            raise SystemExit(1)
+    elif choice == "7":
+        stock_symbol = input("Enter the stock symbol (e.g., TCS): ").strip().upper()
+        index_symbols = [stock_symbol]
+        index_label = f"Single stock: {stock_symbol}"
+        filename_prefix = f"single_stock_{stock_symbol.lower()}"
+    else:
+        print("Invalid choice. Defaulting to Nifty 200 Momentum 30.")
+        index_label, symbols = await resolve_index_symbols("5")
+        index_symbols = symbols
+        if not index_symbols:
+            raise SystemExit(1)
 
     # ── Step 2: connect to Kite MCP and scan ─────────────────────────────────
     print(f"\nConnecting to Kite MCP ({MCP_SERVER_URL}) ...")
@@ -1355,15 +1421,11 @@ async def main():
                     to_date = datetime.now()
                     from_date = to_date - timedelta(days=HISTORICAL_DAYS)
 
-                    if is_portfolio_scan:
-                        buy = []
-                        sell = await scan_portfolio(session, portfolio_map, from_date, to_date, lookback_weeks)
-                    else:
-                        buy = await scan_index(session, index_symbols, from_date, to_date, lookback_weeks)
-                        sell = []
-
-                    report_results(buy, sell, lookback_weeks)
-                    report_results_html(buy, sell, lookback_weeks, index_label, filename_prefix)
+                    await run_single_scan(
+                        session, choice, index_label, index_symbols,
+                        portfolio_map, from_date, to_date,
+                        lookback_weeks, filename_prefix,
+                    )
             except (Exception, KeyboardInterrupt) as exc:
                 traceback.print_exc()
                 raise SystemExit(1) from exc
