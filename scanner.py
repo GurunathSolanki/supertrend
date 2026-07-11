@@ -550,8 +550,11 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
     """Write results to a beautifully designed, responsive HTML report file."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     
-    # Sort signals
-    sorted_buys = sorted(buy_signals, key=lambda x: (not x[2], x[0]))
+    # Sort signals: buys by score descending (extended metrics), else NEW-first then alpha
+    if buy_signals and len(buy_signals[0]) >= 6:
+        sorted_buys = sorted(buy_signals, key=lambda x: -x[5])
+    else:
+        sorted_buys = sorted(buy_signals, key=lambda x: (not x[2], x[0]))
     sorted_sells = sorted(sell_signals, key=lambda x: (not x[2], x[0]))
 
     # Generate lists of items
@@ -584,7 +587,10 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
                 <div class="symbol-section">
                     <span class="{badge_class}">{badge_text}</span>
                     <div style="display: flex; flex-direction: column;">
-                        <span class="symbol-name">{sym}</span>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span class="symbol-name">{sym}</span>
+                            <button class="copy-btn" onclick="copySymbol(this, '{sym}')" title="Copy symbol">⎘</button>
+                        </div>
                         {metrics_html}
                     </div>
                 </div>
@@ -613,7 +619,10 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
                 <div class="symbol-section">
                     <span class="{badge_class}">{badge_text}</span>
                     <div style="display: flex; flex-direction: column;">
-                        <span class="symbol-name">{sym}</span>
+                        <div style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span class="symbol-name">{sym}</span>
+                            <button class="copy-btn" onclick="copySymbol(this, '{sym}')" title="Copy symbol">⎘</button>
+                        </div>
                         {broker_html}
                     </div>
                 </div>
@@ -659,6 +668,7 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
                             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem;">
                                 <span style="font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 4px; {badge_style}">{badge}</span>
                                 <span style="font-weight: 800; font-size: 1.25rem; letter-spacing: 0.5px;">{sym}</span>
+                                <button class="copy-btn" onclick="copySymbol(this, '{sym}')" title="Copy symbol">⎘</button>
                             </div>
                             <div style="display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 1rem;">
                                 <div style="display: flex; justify-content: space-between;"><span>Setup Score:</span><strong style="color: var(--text-primary);">{score:.1f}/100</strong></div>
@@ -932,6 +942,31 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
             border-radius: 12px;
         }}
 
+        .copy-btn {{
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0.2rem 0.45rem;
+            font-size: 0.75rem;
+            line-height: 1;
+            transition: all 0.15s ease;
+            flex-shrink: 0;
+        }}
+
+        .copy-btn:hover {{
+            background: rgba(88, 166, 255, 0.12);
+            border-color: var(--primary);
+            color: var(--primary);
+        }}
+
+        .copy-btn.copied {{
+            background: rgba(63, 185, 80, 0.15);
+            border-color: var(--success);
+            color: var(--success);
+        }}
+
         footer {{
             text-align: center;
             margin-top: 4rem;
@@ -989,6 +1024,34 @@ def report_results_html(buy_signals, sell_signals, lookback_weeks, index_label, 
             <p style="margin-top: 0.5rem; font-size: 0.75rem; opacity: 0.7;">This report is for educational purposes only.</p>
         </footer>
     </div>
+    <script>
+        function copySymbol(btn, symbol) {{
+            navigator.clipboard.writeText(symbol).then(function() {{
+                btn.textContent = '✓';
+                btn.classList.add('copied');
+                setTimeout(function() {{
+                    btn.textContent = '⎘';
+                    btn.classList.remove('copied');
+                }}, 1500);
+            }}).catch(function() {{
+                // Fallback for older browsers
+                var el = document.createElement('textarea');
+                el.value = symbol;
+                el.style.position = 'fixed';
+                el.style.opacity = '0';
+                document.body.appendChild(el);
+                el.select();
+                document.execCommand('copy');
+                document.body.removeChild(el);
+                btn.textContent = '✓';
+                btn.classList.add('copied');
+                setTimeout(function() {{
+                    btn.textContent = '⎘';
+                    btn.classList.remove('copied');
+                }}, 1500);
+            }});
+        }}
+    </script>
 </body>
 </html>
 """
